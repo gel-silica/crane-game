@@ -1,19 +1,11 @@
 import './style.css'
 import Phaser from 'phaser'
 
-// アームの状態を表す列挙型
-enum ArmState {
-  IDLE,
-  EXTENDING,
-  RETRACTING,
-  DELIVERING // 景品を掴んで落とし口まで自動移動する状態を追加
-}
+// アームの状態を表す型
+type ArmState = 'IDLE' | 'EXTENDING' | 'RETRACTING' | 'DELIVERING';
 
-// ゲームの状態を表す列挙型
-enum GameState {
-  PLAYING,
-  GAME_OVER
-}
+// ゲームの状態を表す型
+type GameState = 'PLAYING' | 'GAME_OVER';
 
 class MainScene extends Phaser.Scene {
   private crane!: Phaser.Physics.Arcade.Sprite;
@@ -25,7 +17,7 @@ class MainScene extends Phaser.Scene {
   private armLength: number = 0;
   private maxArmLength: number = 400;
   private armSpeed: number = 3; // 少し遅くして操作性を向上
-  private armState: ArmState = ArmState.IDLE;
+  private armState: ArmState = 'IDLE';
   
   // 景品とキャッチ関連のプロパティ
   private prizes!: Phaser.Physics.Arcade.Group;
@@ -45,14 +37,13 @@ class MainScene extends Phaser.Scene {
   private maxTries: number = 5;
   private triesLeft: number = 5;
   private triesText!: Phaser.GameObjects.Text;
-  private gameState: GameState = GameState.PLAYING;
+  private gameState: GameState = 'PLAYING';
   private gameOverText!: Phaser.GameObjects.Text;
   
   // 落とし口エリア関連のプロパティ
-  private dropZone!: Phaser.GameObjects.Rectangle;
-  private dropZoneLeft!: Phaser.Physics.Arcade.StaticBody;
-  private dropZoneRight!: Phaser.Physics.Arcade.StaticBody;
-  private dropZoneBottom!: Phaser.Physics.Arcade.StaticBody;
+  private dropZoneLeft!: Phaser.Physics.Arcade.Image;
+  private dropZoneRight!: Phaser.Physics.Arcade.Image;
+  private dropZoneBottom!: Phaser.Physics.Arcade.Image;
   private collectedPrizes: Set<Phaser.Physics.Arcade.Sprite> = new Set(); // 既に獲得済みの景品を管理
 
   constructor() {
@@ -83,11 +74,13 @@ class MainScene extends Phaser.Scene {
     this.crane.setScale(0.1); 
     
     // クレーンの当たり判定（ヒットボックス）を調整
-    this.crane.body.setSize(this.crane.displayWidth * 0.8, this.crane.displayHeight * 0.8);
-    this.crane.body.setOffset(this.crane.displayWidth * 0.1, this.crane.displayHeight * 0.1);
-    
-    // クレーンに重力を適用しない
-    this.crane.body.setAllowGravity(false);
+    if (this.crane.body) {
+      this.crane.body.setSize(this.crane.displayWidth * 0.8, this.crane.displayHeight * 0.8);
+      this.crane.body.setOffset(this.crane.displayWidth * 0.1, this.crane.displayHeight * 0.1);
+      // クレーンの物理特性を追加設定
+      this.crane.body.immovable = true; // 完全に固定 (setImmovableではなくimmovableを使用)
+      (this.crane.body as Phaser.Physics.Arcade.Body).setAllowGravity(false); // 重力の影響を受けない
+    }
     
     // クレーンアーム用のグラフィックスオブジェクトを作成
     this.arm = this.add.graphics({
@@ -97,6 +90,11 @@ class MainScene extends Phaser.Scene {
         alpha: 1
       }
     });
+    
+
+    this.arm.moveTo(this.crane.x, this.crane.y);
+    this.armLength = 0;
+    this.drawArm();
     
     // 落とし口エリアを作成（画面下部左側）
     const dropZoneWidth = 150;
@@ -108,8 +106,8 @@ class MainScene extends Phaser.Scene {
     // 落とし口のX座標を保存（自動移動用）
     this.dropZoneX = dropZoneX;
     
-    // 落とし口の視覚的表現（背景のみ）
-    this.dropZone = this.add.rectangle(
+    // 落とし口の視覚的表現（背景のみ）- 変数宣言を省略して直接メソッドチェーンを使用
+    this.add.rectangle(
       dropZoneX, 
       dropZoneY, 
       dropZoneWidth, 
@@ -120,37 +118,34 @@ class MainScene extends Phaser.Scene {
     
     // 落とし口の境界壁を作成（左・右・底の3辺）
     // 左壁
-    const leftWall = this.physics.add.staticImage(
+    this.dropZoneLeft = this.physics.add.staticImage(
       dropZoneX - dropZoneWidth / 2, 
       dropZoneY, 
       'crane'
-    );
-    leftWall.setVisible(false);
-    leftWall.setDisplaySize(10, dropZoneHeight);
-    leftWall.refreshBody();
-    this.dropZoneLeft = leftWall.body;
+    ) as Phaser.Physics.Arcade.Image;
+    this.dropZoneLeft.setVisible(false);
+    this.dropZoneLeft.setDisplaySize(10, dropZoneHeight);
+    this.physics.world.enableBody(this.dropZoneLeft, Phaser.Physics.Arcade.STATIC_BODY);
     
     // 右壁
-    const rightWall = this.physics.add.staticImage(
+    this.dropZoneRight = this.physics.add.staticImage(
       dropZoneX + dropZoneWidth / 2, 
       dropZoneY, 
       'crane'
-    );
-    rightWall.setVisible(false);
-    rightWall.setDisplaySize(10, dropZoneHeight);
-    rightWall.refreshBody();
-    this.dropZoneRight = rightWall.body;
+    ) as Phaser.Physics.Arcade.Image;
+    this.dropZoneRight.setVisible(false);
+    this.dropZoneRight.setDisplaySize(10, dropZoneHeight);
+    this.physics.world.enableBody(this.dropZoneRight, Phaser.Physics.Arcade.STATIC_BODY);
     
     // 底面
-    const bottomWall = this.physics.add.staticImage(
+    this.dropZoneBottom = this.physics.add.staticImage(
       dropZoneX, 
       dropZoneY + dropZoneHeight / 2, 
       'crane'
-    );
-    bottomWall.setVisible(false);
-    bottomWall.setDisplaySize(dropZoneWidth, 10);
-    bottomWall.refreshBody();
-    this.dropZoneBottom = bottomWall.body;
+    ) as Phaser.Physics.Arcade.Image;
+    this.dropZoneBottom.setVisible(false);
+    this.dropZoneBottom.setDisplaySize(dropZoneWidth, 10);
+    this.physics.world.enableBody(this.dropZoneBottom, Phaser.Physics.Arcade.STATIC_BODY);
     
     // 落とし口のラベル
     this.add.text(
@@ -200,7 +195,10 @@ class MainScene extends Phaser.Scene {
     this.physics.add.overlap(
       this.prizes,
       this.dropZoneBottom,
-      this.handlePrizeInDropZone,
+      (object1) => {
+        const prize = object1 as Phaser.Physics.Arcade.Sprite;
+        this.handlePrizeInDropZone(prize);
+      },
       undefined,
       this
     );
@@ -261,12 +259,14 @@ class MainScene extends Phaser.Scene {
     this.crane.setCollideWorldBounds(true);
     
     // カーソルキーの入力を取得
-    this.cursors = this.input.keyboard.createCursorKeys();
+    if (this.input.keyboard) {
+      this.cursors = this.input.keyboard.createCursorKeys();
+    }
     
     // スマホ用のタッチ入力処理
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
       // ゲームオーバー時は操作不可
-      if (this.gameState === GameState.GAME_OVER) return;
+      if (this.gameState === 'GAME_OVER') return;
       
       const touchX = pointer.x;
       const touchY = pointer.y;
@@ -284,8 +284,8 @@ class MainScene extends Phaser.Scene {
         }
       } else {
         // 画面下部がタップされた場合はアーム操作
-        if (this.armState === ArmState.IDLE) {
-          this.armState = ArmState.EXTENDING;
+        if (this.armState === 'IDLE') {
+          this.armState = 'EXTENDING';
           // トライ回数を減らす
           this.decrementTries();
         }
@@ -294,14 +294,14 @@ class MainScene extends Phaser.Scene {
     
     this.input.on('pointerup', () => {
       // ゲームオーバー時は操作不可
-      if (this.gameState === GameState.GAME_OVER) return;
+      if (this.gameState === 'GAME_OVER') return;
       
       // タッチが終わったら左右移動停止
       this.crane.setVelocityX(0);
       
       // アームが下降中だった場合、上昇に切り替え
-      if (this.armState === ArmState.EXTENDING) {
-        this.armState = ArmState.RETRACTING;
+      if (this.armState === 'EXTENDING') {
+        this.armState = 'RETRACTING';
       }
     });
     
@@ -331,24 +331,24 @@ class MainScene extends Phaser.Scene {
 
   update() {
     // 自動移動状態の場合は、ユーザー操作を無視して落とし口へ移動
-    if (this.armState === ArmState.DELIVERING) {
+    if (this.armState === 'DELIVERING') {
       this.handleAutoDelivery();
     } 
     // 通常の操作処理
-    else {
+    else if (this.cursors) {
       // クレーンの左右移動処理
       if (this.cursors.left.isDown) {
         // 左キーが押されたら左に移動
         this.crane.setVelocityX(-this.moveSpeed);
         // 左右移動中はアームを操作できないようにする
-        if (this.armState === ArmState.IDLE) {
+        if (this.armState === 'IDLE') {
           this.resetArm();
         }
       } else if (this.cursors.right.isDown) {
         // 右キーが押されたら右に移動
         this.crane.setVelocityX(this.moveSpeed);
         // 左右移動中はアームを操作できないようにする
-        if (this.armState === ArmState.IDLE) {
+        if (this.armState === 'IDLE') {
           this.resetArm();
         }
       } else if (!this.input.activePointer.isDown) {
@@ -404,28 +404,28 @@ class MainScene extends Phaser.Scene {
   
   private handleArmMovement() {
     // ゲームオーバー時は操作不可
-    if (this.gameState === GameState.GAME_OVER) return;
+    if (this.gameState === 'GAME_OVER' || !this.cursors) return;
     
     // 下キーが押された場合、アームを伸ばす
-    if (this.cursors.down.isDown && this.armState === ArmState.IDLE) {
-      this.armState = ArmState.EXTENDING;
+    if (this.cursors.down.isDown && this.armState === 'IDLE') {
+      this.armState = 'EXTENDING';
       // トライ回数を減らす
       this.decrementTries();
     }
     
     // アームの状態に応じた処理
     switch (this.armState) {
-      case ArmState.EXTENDING:
+      case 'EXTENDING':
         // アームを下に伸ばす
         this.armLength += this.armSpeed;
         
         // 最大長さに達したら自動で戻す
         if (this.armLength >= this.maxArmLength) {
-          this.armState = ArmState.RETRACTING;
+          this.armState = 'RETRACTING';
         }
         break;
         
-      case ArmState.RETRACTING:
+      case 'RETRACTING':
         // アームを上に戻す
         this.armLength -= this.armSpeed;
         
@@ -433,7 +433,7 @@ class MainScene extends Phaser.Scene {
         if (this.armLength <= 0) {
           if (this.caughtPrize) {
             // 景品を掴んでいる場合は、自動配達状態へ移行
-            this.armState = ArmState.DELIVERING;
+            this.armState = 'DELIVERING';
             // 落とし口の上へ自動移動
             this.moveToDropZone();
           } else {
@@ -443,24 +443,24 @@ class MainScene extends Phaser.Scene {
         }
         break;
         
-      case ArmState.DELIVERING:
+      case 'DELIVERING':
         // 自動移動状態では何もしない（update内で処理）
         break;
         
-      case ArmState.IDLE:
+      case 'IDLE':
         // アイドル状態では何もしない
         break;
     }
     
     // 下キーを離した場合、アームを戻す処理を開始
-    if (this.armState === ArmState.EXTENDING && !this.cursors.down.isDown) {
-      this.armState = ArmState.RETRACTING;
+    if (this.armState === 'EXTENDING' && !this.cursors.down.isDown) {
+      this.armState = 'RETRACTING';
     }
   }
   
   private resetArm() {
     // アームの状態をリセット
-    this.armState = ArmState.IDLE;
+    this.armState = 'IDLE';
     this.armLength = 0;
   }
   
@@ -469,7 +469,7 @@ class MainScene extends Phaser.Scene {
     this.arm.clear();
     
     // アームが完全に戻ったときに景品をリリース
-    if (this.armState === ArmState.RETRACTING && this.armLength <= 0 && this.caughtPrize) {
+    if (this.armState === 'RETRACTING' && this.armLength <= 0 && this.caughtPrize) {
       this.releasePrize();
     }
     
@@ -494,7 +494,7 @@ class MainScene extends Phaser.Scene {
       this.drawClaw(startX, endY);
       
       // アームが伸びている時にのみ、景品との接触判定をチェック
-      if (this.armState === ArmState.EXTENDING && !this.caughtPrize) {
+      if (this.armState === 'EXTENDING' && !this.caughtPrize) {
         this.checkPrizeCollision();
       }
       
@@ -525,9 +525,7 @@ class MainScene extends Phaser.Scene {
   // 景品を生成するメソッド
   private createPrizes(count: number) {
     const gameWidth = this.cameras.main.width;
-    const gameHeight = this.cameras.main.height;
-    const groundHeight = 20;
-    const groundY = this.cameras.main.height - groundHeight * 2; // 地面と同じY座標計算
+    const groundY = this.cameras.main.height - 40; // 地面と同じY座標計算
     
     // 落とし口エリアの幅と位置を考慮
     const dropZoneWidth = 150;
@@ -548,15 +546,18 @@ class MainScene extends Phaser.Scene {
       // 物理特性を設定
       prize.setCollideWorldBounds(true);
       prize.setBounce(0.1);
-      prize.body.setAllowGravity(true);
       
-      // 景品の当たり判定サイズを調整
-      const hitboxSize = prize.displayWidth * 0.8;
-      prize.body.setSize(hitboxSize, hitboxSize);
-      
-      // 景品が回転しすぎないように抵抗を設定
-      prize.body.setAngularDrag(200);
-      prize.body.setDrag(20);
+      if (prize.body) {
+        prize.body.allowGravity = true;
+        
+        // 景品の当たり判定サイズを調整
+        const hitboxSize = prize.displayWidth * 0.8;
+        prize.body.setSize(hitboxSize, hitboxSize);
+        
+        // 景品が回転しすぎないように抵抗を設定
+        prize.body.setAngularDrag(200);
+        prize.body.setDrag(20);
+      }
     }
     
     // 重力を弱めに設定し、景品の落下速度を遅く
@@ -593,15 +594,20 @@ class MainScene extends Phaser.Scene {
       this.caughtPrize = prize;
       
       // 物理演算を無効化（クレーンアームに固定するため）
-      prize.body.setAllowGravity(false);
-      prize.body.setVelocity(0, 0);
-      prize.body.setAngularVelocity(0);
+      if (prize.body) {
+        // 重力を無効化
+        (prize.body as Phaser.Physics.Arcade.Body).setAllowGravity(false);
+        // velocity.setを使用してvelocityを直接設定
+        prize.body.velocity.set(0, 0);
+        // angularVelocityプロパティの代わりに別の方法で回転を止める
+        prize.setAngularVelocity(0);
+      }
       
       // 景品の角度を水平に固定（代替方法）
       prize.setRotation(0);
       
       // 上昇処理に切り替え
-      this.armState = ArmState.RETRACTING;
+      this.armState = 'RETRACTING';
     }
   }
   
@@ -613,7 +619,10 @@ class MainScene extends Phaser.Scene {
       this.showCatchMessage();
       
       // 物理演算を再度有効化
-      this.caughtPrize.body.setAllowGravity(true);
+      if (this.caughtPrize.body) {
+        // 重力を有効化
+        (this.caughtPrize.body as Phaser.Physics.Arcade.Body).setAllowGravity(true);
+      }
       
       // 景品の参照をクリア
       this.caughtPrize = null;
@@ -642,7 +651,7 @@ class MainScene extends Phaser.Scene {
 
   // トライ回数を減らすメソッド
   private decrementTries() {
-    if (this.gameState === GameState.GAME_OVER) return;
+    if (this.gameState === 'GAME_OVER') return;
     
     this.triesLeft--;
     // トライ回数表示を更新
@@ -669,7 +678,7 @@ class MainScene extends Phaser.Scene {
   
   // ゲームオーバー処理
   private gameOver() {
-    this.gameState = GameState.GAME_OVER;
+    this.gameState = 'GAME_OVER';
     this.gameOverText.setVisible(true);
     
     // クレーンを停止
@@ -753,7 +762,9 @@ class MainScene extends Phaser.Scene {
       this.showCatchMessage();
       
       // 物理演算を再度有効化して落下させる
-      this.caughtPrize.body.setAllowGravity(true);
+      if (this.caughtPrize.body) {
+        (this.caughtPrize.body as Phaser.Physics.Arcade.Body).setAllowGravity(true);
+      }
       
       // 景品の参照をクリア
       this.caughtPrize = null;
@@ -785,7 +796,7 @@ class MainScene extends Phaser.Scene {
           prize.y > dropZoneTop && prize.y < dropZoneBottom) {
         
         // 景品が静止状態（ほぼ動いていない）かチェック
-        if (Math.abs(prize.body.velocity.y) < 10) {
+        if (prize.body && Math.abs(prize.body.velocity.y) < 10) {
           // 獲得処理
           this.handlePrizeInDropZone(prize);
           console.log('エリア内景品検出: x=', prize.x, 'y=', prize.y);
@@ -811,13 +822,13 @@ const config: Phaser.Types.Core.GameConfig = {
     default: 'arcade',
     arcade: {
       gravity: {
-        y: 0,
+        y: 150, // 世界の重力をここで一度だけ設定
         x: 0
-      },  // クレーンは重力の影響を受けないように
+      },
       debug: false
     }
   }
 }
 
 // ゲームインスタンスを生成
-const game = new Phaser.Game(config)
+new Phaser.Game(config)
